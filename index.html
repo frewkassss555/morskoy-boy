@@ -1,0 +1,1575 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0a2342">
+<title>Морской бой</title>
+<style>
+/* ====================================================================
+   ОБЩЕЕ
+   ==================================================================== */
+:root {
+  --bg1: #0a2342;
+  --bg2: #14508a;
+  --water: #2f8fd0;
+  --water2: #1c69a3;
+  --line: rgba(255, 255, 255, .26);
+  --accent: #ffc83d;
+  --p1: #5fd0ff;          /* цвет игрока 1 */
+  --p2: #ffab5c;          /* цвет игрока 2 */
+  --hit: #ff3b30;
+  --ok: #3ddc84;
+  --bad: #ff4d4d;
+  --pc: #fff;             /* цвет текущего игрока, задаётся через data-player */
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body {
+  margin: 0; height: 100%; overflow: hidden;
+  overscroll-behavior: none;            /* без «потяни, чтобы обновить» */
+  touch-action: none;                   /* без прокрутки и зума пальцами */
+  -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none;
+}
+body {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: #fff;
+  background: radial-gradient(120% 120% at 50% 0%, var(--bg2), var(--bg1) 70%);
+}
+[data-player="0"] { --pc: var(--p1); }
+[data-player="1"] { --pc: var(--p2); }
+
+h1, h2, h3, p { margin: 0; }
+
+/* ---------- экраны ---------- */
+.screen {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  display: none; flex-direction: column;
+  padding: 10px 16px;
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
+  padding-bottom: max(10px, env(safe-area-inset-bottom));
+}
+.screen.active { display: flex; }
+.center { align-items: center; justify-content: center; text-align: center; }
+
+.bar { display: flex; align-items: center; flex: none; min-height: 58px; }
+.bar > * + * { margin-left: 12px; }
+.bar h2 { flex: 1; font-size: 26px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar .info { font-size: 18px; opacity: .9; white-space: nowrap; }
+.cap { font-size: 18px; font-weight: 700; height: 32px; line-height: 32px; text-align: center; white-space: nowrap; }
+.hint { font-size: 16px; line-height: 1.3; opacity: .85; }
+
+/* ---------- кнопки (не меньше 48px) ---------- */
+.btn {
+  min-height: 54px; min-width: 54px; padding: 6px 22px;
+  border: 0; border-radius: 14px;
+  font: inherit; font-size: 19px; font-weight: 700; line-height: 1.1;
+  color: #0a2342; background: var(--accent);
+  box-shadow: 0 4px 0 rgba(0, 0, 0, .28);
+  touch-action: manipulation;
+}
+.btn:active { transform: translateY(2px); box-shadow: 0 2px 0 rgba(0, 0, 0, .28); }
+.btn.ghost { color: #fff; background: rgba(255, 255, 255, .16); }
+.btn.danger { color: #fff; background: #e5484d; }
+.btn.ok { background: var(--ok); }
+.btn.big { min-height: max(56px, min(72px, 12vh)); font-size: 26px; width: min(420px, 80vw); }
+.btn:disabled { opacity: .38; }
+
+/* ====================================================================
+   ПОЛЕ. Размер клетки задаётся переменной --c (её считает layout()).
+   ==================================================================== */
+.board {
+  --c: 40px; --n: 10;
+  position: relative; flex: none;
+  width: calc(var(--c) * (var(--n) + 1));
+  height: calc(var(--c) * (var(--n) + 1));
+}
+.board .lbl {
+  position: absolute; width: var(--c); height: var(--c);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: calc(var(--c) * .42); opacity: .85;
+}
+.field {
+  position: absolute; left: var(--c); top: var(--c);
+  width: calc(var(--c) * var(--n)); height: calc(var(--c) * var(--n));
+  background: linear-gradient(160deg, var(--water), var(--water2));
+  border-radius: calc(var(--c) * .14);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, .55), 0 8px 24px rgba(0, 0, 0, .35);
+  overflow: hidden;
+}
+.ships, .cells { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
+/* клетки лежат ПОВЕРХ кораблей: на них рисуются отметки и подсветка */
+.cells {
+  display: grid;
+  grid-template-columns: repeat(var(--n), 1fr);
+  grid-template-rows: repeat(var(--n), 1fr);
+}
+.cell { position: relative; box-shadow: inset -1px -1px 0 var(--line); }
+
+/* ---------- корабль (фото или цветной блок) ---------- */
+.ship {
+  background-size: cover; background-position: center; background-repeat: no-repeat;
+  border-radius: calc(var(--c) * .16);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .9), 0 2px 6px rgba(0, 0, 0, .4);
+}
+.ship.plain { background-image: linear-gradient(180deg, hsl(var(--hue), 75%, 64%), hsl(var(--hue), 70%, 44%)); }
+.len-4 { --hue: 265; } .len-3 { --hue: 160; } .len-2 { --hue: 32; } .len-1 { --hue: 340; }
+
+.ship.on-field {
+  position: absolute;
+  left: calc(var(--c) * var(--x) + 2px);
+  top: calc(var(--c) * var(--y) + 2px);
+  width: calc(var(--c) * var(--w) - 5px);
+  height: calc(var(--c) * var(--h) - 5px);
+}
+.ship.selected { box-shadow: inset 0 0 0 3px var(--accent), 0 0 14px 2px var(--accent); }
+.ship.sunk { box-shadow: inset 0 0 0 3px var(--hit), 0 0 10px rgba(255, 59, 48, .9); }
+.board.own .ship.sunk { filter: grayscale(.9) brightness(.6); }
+.ship.fresh { animation: reveal .7s cubic-bezier(.2, 1.4, .4, 1); }
+@keyframes reveal { from { transform: scale(.4); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* ---------- отметки выстрелов ---------- */
+.cell.miss::before {                       /* промах — точка */
+  content: ""; position: absolute; top: 37%; left: 37%; right: 37%; bottom: 37%;
+  border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .15);
+}
+.cell.miss.auto::before { top: 42%; left: 42%; right: 42%; bottom: 42%; opacity: .6; }
+.cell.miss.fresh:not(.auto)::after {       /* круги на воде */
+  content: ""; position: absolute; top: 20%; left: 20%; right: 20%; bottom: 20%;
+  border: 2px solid #fff; border-radius: 50%;
+  animation: ripple .7s ease-out forwards;
+}
+.cell.miss.auto.fresh::before { animation: fadein .6s; }
+@keyframes ripple { from { transform: scale(.3); opacity: 1; } to { transform: scale(1.9); opacity: 0; } }
+@keyframes fadein { from { opacity: 0; } }
+
+.cell.hit { background: rgba(255, 59, 48, .42); }
+.cell.hit::before, .cell.hit::after {      /* попадание — красный крестик */
+  content: ""; position: absolute; left: 50%; top: 50%;
+  width: 88%; height: 15%; border-radius: 99px;
+  background: var(--hit); box-shadow: 0 0 0 1.5px #fff;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+.cell.hit::after { transform: translate(-50%, -50%) rotate(-45deg); }
+.cell.hit.fresh { animation: flash .55s ease-out; z-index: 3; }
+.cell.hit.fresh::before { animation: crossA .4s cubic-bezier(.2, 1.6, .4, 1); }
+.cell.hit.fresh::after { animation: crossB .4s cubic-bezier(.2, 1.6, .4, 1); }
+@keyframes flash { from { background: #fff3a8; box-shadow: 0 0 0 calc(var(--c) * .5) rgba(255, 200, 61, .55); } }
+@keyframes crossA { from { transform: translate(-50%, -50%) rotate(45deg) scale(0); } }
+@keyframes crossB { from { transform: translate(-50%, -50%) rotate(-45deg) scale(0); } }
+/* на потопленном корабле крестики убираем, чтобы было видно фото */
+.cell.hit.sunk { background: none; }
+.cell.hit.sunk::before, .cell.hit.sunk::after { display: none; }
+
+.board.shake { animation: shake .3s; }
+@keyframes shake {
+  20% { transform: translate(-5px, 2px); } 40% { transform: translate(5px, -2px); }
+  60% { transform: translate(-3px, -2px); } 80% { transform: translate(3px, 2px); }
+}
+
+/* ---------- подсветка при расстановке ---------- */
+.cell.zone { background: rgba(255, 70, 70, .2); }       /* сюда ставить нельзя (занято или рядом корабль) */
+.cell.pv-ok { background: rgba(61, 220, 132, .65); }    /* корабль встанет сюда */
+.cell.pv-bad { background: rgba(255, 50, 50, .8); }     /* сюда корабль не встаёт */
+
+/* ====================================================================
+   СПИСОК КОРАБЛЕЙ (док, предпросмотр фото, флот соперника)
+   ==================================================================== */
+.fleet { --c: 40px; }
+.fleet-row { display: flex; justify-content: center; }
+.slot { padding: 6px calc(var(--c) * .12); position: relative; }
+.piece { width: calc(var(--c) * var(--len)); height: var(--c); transition: transform .12s; }
+.slot.gone .piece { background-image: none !important; box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .22); }
+.slot.sel .piece { box-shadow: inset 0 0 0 3px var(--accent), 0 0 14px 2px var(--accent); transform: scale(1.08); }
+.slot.dead .piece { filter: grayscale(1) brightness(.5); }
+.slot.dead::after {
+  content: ""; position: absolute; left: 4%; right: 4%; top: 50%; height: 3px; margin-top: -1.5px;
+  background: var(--hit); border-radius: 3px; transform: rotate(-8deg);
+}
+.fleet.compact { display: flex; flex-wrap: wrap; justify-content: center; }
+.fleet.compact .fleet-row { display: contents; }
+.fleet.compact .slot { padding: 3px calc(var(--c) * .12); }
+
+/* ====================================================================
+   ГЛАВНОЕ МЕНЮ
+   ==================================================================== */
+#scr-menu h1 { font-size: min(72px, 11vh); letter-spacing: 1px; text-shadow: 0 4px 0 rgba(0, 0, 0, .3); }
+#scr-menu .sub { font-size: 20px; opacity: .85; margin: 6px 0 14px; }
+#menu-fleet { margin-bottom: 8px; }
+#menu-fleet .slot { padding: 3px calc(var(--c) * .12); }
+#scr-menu .btn { margin-top: 14px; }
+#scr-menu #btn-fs { position: absolute; top: 10px; right: 16px; margin: 0; }
+#menu-photo-info { margin-top: 12px; }
+@media (max-height: 470px) { #menu-fleet { display: none; } }   /* совсем низкий экран — без картинки флота */
+
+/* ====================================================================
+   ФОТО ДЛЯ КОРАБЛЕЙ
+   ==================================================================== */
+#ph-main { flex: 1; min-height: 0; display: flex; }
+.ph-col { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; overflow: hidden; padding: 0 8px; }
+#ph-grid { display: grid; grid-template-columns: repeat(5, 1fr); grid-gap: 8px; margin: 6px 0 10px; }
+.thumb {
+  position: relative; padding-bottom: 100%; border-radius: 12px;
+  background-size: cover; background-position: center;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .85), 0 2px 6px rgba(0, 0, 0, .4);
+}
+.thumb b {
+  position: absolute; left: 6px; top: 6px; min-width: 26px; height: 26px; line-height: 26px;
+  border-radius: 13px; background: rgba(0, 0, 0, .65); font-size: 15px; text-align: center;
+}
+.thumb i {
+  position: absolute; right: 6px; top: 6px; width: 26px; height: 26px; line-height: 24px;
+  border-radius: 13px; background: #e5484d; font-style: normal; font-weight: 700; text-align: center;
+}
+#ph-empty {
+  grid-column: 1 / -1; padding: 28px 16px; border-radius: 14px; text-align: center;
+  border: 2px dashed rgba(255, 255, 255, .4); font-size: 18px; line-height: 1.4;
+}
+#ph-fleet { margin-top: 6px; }
+#ph-foot { justify-content: center; flex-wrap: wrap; }
+/* поле выбора файлов прячем, но не через display:none — так надёжнее на iOS */
+#ph-input { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+
+/* ====================================================================
+   РАССТАНОВКА
+   ==================================================================== */
+#scr-place h2, #scr-battle h2, #scr-pass h1 { color: var(--pc); }
+#pl-main { flex: 1; min-height: 0; display: flex; align-items: center; }
+#pl-side { flex: 1; min-width: 0; margin-left: 24px; display: flex; flex-direction: column; justify-content: center; }
+#pl-hint { text-align: center; min-height: 42px; margin-bottom: 6px; }
+#pl-dock { margin-bottom: 10px; }
+#pl-dock .slot { touch-action: none; }
+#pl-btns { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); grid-gap: 8px; }
+#pl-btns .btn { padding: 6px 10px; font-size: 18px; }
+#ghost {
+  position: fixed; left: 0; top: 0; display: none; z-index: 50;
+  pointer-events: none; opacity: .92;
+  width: calc(var(--c) * var(--w) - 5px); height: calc(var(--c) * var(--h) - 5px);
+}
+
+/* ====================================================================
+   ЗАСТАВКА «ПЕРЕДАЙ ПЛАНШЕТ»
+   ==================================================================== */
+#scr-pass { background: radial-gradient(90% 90% at 50% 40%, rgba(255, 255, 255, .1), rgba(0, 0, 0, .35)); }
+#scr-pass .icon { font-size: min(110px, 18vh); line-height: 1; }
+#scr-pass h1 { font-size: min(60px, 9vh); margin: 10px 0; }
+#scr-pass p { font-size: 24px; opacity: .9; margin-bottom: 28px; max-width: 80%; }
+
+/* ====================================================================
+   БОЙ
+   ==================================================================== */
+#bt-main { flex: 1; min-height: 0; display: flex; align-items: flex-start; justify-content: center; }
+#bt-big { position: relative; flex: none; }
+#bt-side { margin-left: 24px; display: flex; flex-direction: column; align-items: center; }
+#bt-banner {
+  position: absolute; left: 50%; top: 52%; z-index: 10; pointer-events: none;
+  font-weight: 900; white-space: nowrap; color: var(--accent);
+  text-shadow: 0 0 0 #000, 3px 3px 0 #b3140c, -2px -2px 0 #b3140c, 2px -2px 0 #b3140c, -2px 2px 0 #b3140c, 0 8px 20px rgba(0, 0, 0, .6);
+  transform: translate(-50%, -50%) scale(0); opacity: 0;
+}
+#bt-banner.show { animation: banner 1.5s ease-out forwards; }
+@keyframes banner {
+  0% { transform: translate(-50%, -50%) rotate(-8deg) scale(.2); opacity: 0; }
+  18% { transform: translate(-50%, -50%) rotate(-8deg) scale(1.15); opacity: 1; }
+  28% { transform: translate(-50%, -50%) rotate(-8deg) scale(1); opacity: 1; }
+  75% { transform: translate(-50%, -50%) rotate(-8deg) scale(1); opacity: 1; }
+  100% { transform: translate(-50%, -50%) rotate(-8deg) scale(1.2); opacity: 0; }
+}
+
+/* ====================================================================
+   КОНЕЦ ИГРЫ
+   ==================================================================== */
+#scr-over h1 { font-size: min(46px, 7vh); text-align: center; flex: none; color: var(--pc); }
+#ov-main { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: space-around; }
+.ov-col { display: flex; flex-direction: column; align-items: center; }
+.ov-col .cap { color: var(--pc); }
+.ov-col .hint { height: 26px; line-height: 26px; white-space: nowrap; }
+#ov-foot { justify-content: center; }
+
+/* ====================================================================
+   ОКНО ПОДТВЕРЖДЕНИЯ, ПОДСКАЗКА, «ПОВЕРНИ ПЛАНШЕТ»
+   ==================================================================== */
+#modal {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 100;
+  display: none; align-items: center; justify-content: center;
+  background: rgba(0, 10, 25, .7);
+}
+#modal.show { display: flex; }
+#modal .box { background: #16406e; border-radius: 20px; padding: 26px; max-width: 520px; width: 86%; text-align: center; box-shadow: 0 12px 40px rgba(0, 0, 0, .5); }
+#modal p { font-size: 22px; line-height: 1.35; margin-bottom: 22px; }
+#modal .btn { margin: 0 6px; }
+#toast {
+  position: fixed; left: 50%; bottom: 84px; z-index: 110; transform: translateX(-50%);
+  max-width: 86%; padding: 12px 20px; border-radius: 14px; text-align: center;
+  background: rgba(0, 0, 0, .82); font-size: 18px;
+  opacity: 0; pointer-events: none; transition: opacity .25s;
+}
+#toast.show { opacity: 1; }
+#rotate-hint {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 200;
+  display: none; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; padding: 24px; font-size: 26px; font-weight: 700; background: var(--bg1);
+}
+#rotate-hint span { font-size: 90px; line-height: 1.2; }
+@media (orientation: portrait) { #rotate-hint { display: flex; } }
+</style>
+</head>
+<body>
+
+<!-- ============ ГЛАВНОЕ МЕНЮ ============ -->
+<section class="screen center active" id="scr-menu">
+  <h1>⚓ Морской бой</h1>
+  <p class="sub">Вместо кораблей — твои фото. Два игрока, один планшет.</p>
+  <div class="fleet" id="menu-fleet"></div>
+  <button class="btn big" id="btn-play">Играть</button>
+  <button class="btn big ghost" id="btn-photos">Фото для кораблей</button>
+  <p class="hint" id="menu-photo-info"></p>
+  <button class="btn ghost" id="btn-fs" hidden>⛶ На весь экран</button>
+</section>
+
+<!-- ============ ФОТО ДЛЯ КОРАБЛЕЙ ============ -->
+<section class="screen" id="scr-photos">
+  <header class="bar">
+    <button class="btn ghost" id="ph-back">← Назад</button>
+    <h2>Фото для кораблей</h2>
+    <span class="info" id="ph-count"></span>
+  </header>
+  <div id="ph-main">
+    <div class="ph-col" id="ph-left">
+      <div class="cap">Загруженные фото</div>
+      <div id="ph-grid"></div>
+      <p class="hint" id="ph-hint"></p>
+    </div>
+    <div class="ph-col" id="ph-right">
+      <div class="cap">Так будут выглядеть корабли</div>
+      <div class="fleet" id="ph-fleet"></div>
+    </div>
+  </div>
+  <footer class="bar" id="ph-foot">
+    <button class="btn" id="ph-add">＋ Добавить фото</button>
+    <button class="btn ghost" id="ph-replace">Сменить фото</button>
+    <button class="btn danger" id="ph-clear">Удалить все фото</button>
+  </footer>
+  <input type="file" id="ph-input" multiple accept="image/*">
+</section>
+
+<!-- ============ РАССТАНОВКА ============ -->
+<section class="screen" id="scr-place">
+  <header class="bar">
+    <button class="btn ghost" id="pl-menu">☰ Меню</button>
+    <h2 id="pl-title"></h2>
+  </header>
+  <div id="pl-main">
+    <div class="board" id="pl-board"></div>
+    <div id="pl-side">
+      <p class="hint" id="pl-hint"></p>
+      <div class="fleet" id="pl-dock"></div>
+      <div id="pl-btns">
+        <button class="btn ghost" id="pl-rotate">Повернуть</button>
+        <button class="btn ghost" id="pl-random">Расставить случайно</button>
+        <button class="btn ghost" id="pl-clear">Убрать все</button>
+        <button class="btn ok" id="pl-done">Готово</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ ЗАСТАВКА «ПЕРЕДАЙ ПЛАНШЕТ» ============ -->
+<section class="screen center" id="scr-pass">
+  <div class="icon">🤝</div>
+  <h1 id="pass-title"></h1>
+  <p id="pass-sub"></p>
+  <button class="btn big" id="pass-ok">Я готов</button>
+</section>
+
+<!-- ============ БОЙ ============ -->
+<section class="screen" id="scr-battle">
+  <header class="bar">
+    <button class="btn ghost" id="bt-menu">☰ Меню</button>
+    <h2 id="bt-title"></h2>
+    <span class="info" id="bt-info"></span>
+    <button class="btn ghost" id="bt-sound">🔊</button>
+  </header>
+  <div id="bt-main">
+    <div id="bt-big">
+      <div class="cap">Поле соперника — стреляй сюда!</div>
+      <div class="board" id="bt-target"></div>
+      <div id="bt-banner">ПОТОПЛЕН!</div>
+    </div>
+    <div id="bt-side">
+      <div class="cap">Твоё поле</div>
+      <div class="board own" id="bt-own"></div>
+      <div class="cap">Корабли соперника</div>
+      <div class="fleet compact" id="bt-fleet"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ КОНЕЦ ИГРЫ ============ -->
+<section class="screen" id="scr-over">
+  <h1 id="ov-title"></h1>
+  <div id="ov-main">
+    <div class="ov-col" data-player="0">
+      <div class="cap" id="ov-cap0"></div>
+      <div class="board" id="ov-board0"></div>
+      <p class="hint" id="ov-stat0"></p>
+    </div>
+    <div class="ov-col" data-player="1">
+      <div class="cap" id="ov-cap1"></div>
+      <div class="board" id="ov-board1"></div>
+      <p class="hint" id="ov-stat1"></p>
+    </div>
+  </div>
+  <footer class="bar" id="ov-foot">
+    <button class="btn" id="ov-rematch">Реванш</button>
+    <button class="btn ghost" id="ov-menu">В меню</button>
+  </footer>
+</section>
+
+<!-- ============ СЛУЖЕБНЫЕ СЛОИ ============ -->
+<div id="ghost"></div>
+<div id="modal"><div class="box">
+  <p id="modal-text"></p>
+  <button class="btn ghost" id="modal-no">Отмена</button>
+  <button class="btn" id="modal-yes">Да</button>
+</div></div>
+<div id="toast"></div>
+<div id="rotate-hint"><span>🔄</span>Поверни планшет горизонтально</div>
+
+<!-- Сюда JS подставляет стили с фотографиями: .ph-0 { background-image: ... } -->
+<style id="photo-styles"></style>
+
+<script>
+'use strict';
+
+/* ======================================================================
+   СТРУКТУРА КОДА
+   1. Настройки, режимы игры, виды выстрелов, шина событий
+   2. Логика игры  — чистые функции, ничего не знают про экран (DOM)
+   3. Фото         — уменьшение через canvas, хранение в IndexedDB
+   4. Звук         — Web Audio API
+   5. Отрисовка    — поле, корабли, списки кораблей
+   6. Экраны       — меню, фото, расстановка, заставка, бой, конец игры
+   7. Запуск
+
+   КАК ДОБАВЛЯТЬ НОВОЕ
+   • Новый режим (другой флот, размер поля, правило «кто ходит дальше») —
+     добавить объект в MODES.
+   • Особый выстрел (крестом, по линии…) — добавить объект в WEAPONS и
+     записать его id в UI.battle.weapon перед выстрелом.
+   • Таймер хода, бонусы, счётчики — подписаться на события через Bus.on():
+       'game:new'       { game }
+       'placement:done' { game, player }
+       'turn:start'     { game, player }   — игрок получил планшет и ходит
+       'shot'           { game, outcome }  — после каждого выстрела
+       'game:over'      { game, winner }
+     Пример таймера хода:
+       Bus.on('turn:start', function (e) { запуститьОтсчёт(e.game.mode.turnSeconds); });
+       Bus.on('shot',       function (e) { if (!e.outcome.keepTurn) остановитьОтсчёт(); });
+   ====================================================================== */
+
+
+/* ======================================================================
+   1. НАСТРОЙКИ
+   ====================================================================== */
+var LETTERS = 'ABCDEFGHIJKLMNOPQRST';
+var PHOTO_MAX_SIDE = 600;      // до какого размера уменьшаем фото (по большей стороне)
+var PHOTO_QUALITY = 0.85;      // качество JPEG
+var DRAG_THRESHOLD = 10;       // сколько пикселей нужно сдвинуть палец, чтобы началось перетаскивание
+
+/* Режимы игры. Сейчас один — классический. */
+var MODES = {
+  classic: {
+    id: 'classic',
+    title: 'Классический',
+    size: 10,                                   // поле 10x10
+    fleet: [4, 3, 3, 2, 2, 2, 1, 1, 1, 1],      // длины кораблей; номер в списке = id корабля
+    turnSeconds: 0,                             // задел под таймер хода (0 — без таймера)
+    /* Остаётся ли ход у стрелявшего. outcome — результат fire(). */
+    keepsTurn: function (outcome) { return outcome.anyHit; }
+  }
+};
+
+/* Виды выстрелов: функция cells возвращает клетки, по которым бьёт выстрел. */
+var WEAPONS = {
+  single: { id: 'single', title: 'Обычный выстрел', cells: function (x, y) { return [[x, y]]; } }
+  // пример особого выстрела:
+  // cross: { id: 'cross', title: 'Крест', cells: function (x, y) { return [[x, y], [x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]; } }
+};
+
+/* Простая шина событий — к ней подключаются новые фичи. */
+var Bus = {
+  handlers: {},
+  on: function (evt, fn) { (this.handlers[evt] = this.handlers[evt] || []).push(fn); },
+  emit: function (evt, data) { (this.handlers[evt] || []).forEach(function (fn) { fn(data); }); }
+};
+
+
+/* ======================================================================
+   2. ЛОГИКА ИГРЫ (без DOM)
+   ====================================================================== */
+/* Состояния клетки, по которой стреляли */
+var SHOT = { NONE: 0, MISS: 1, HIT: 2, AUTO: 3 };   // AUTO — автопромах вокруг потопленного корабля
+
+/* Пустое поле с флотом, который ещё не расставлен */
+function createBoard(size, fleet) {
+  var board = { size: size, grid: [], shots: [], ships: [] };
+  for (var i = 0; i < size * size; i++) { board.grid.push(null); board.shots.push(SHOT.NONE); }
+  fleet.forEach(function (len, id) {
+    board.ships.push({ id: id, len: len, x: 0, y: 0, dir: 'h', placed: false, hits: 0, sunk: false });
+  });
+  return board;
+}
+
+function cellIndex(board, x, y) { return y * board.size + x; }
+function inBounds(board, x, y) { return x >= 0 && y >= 0 && x < board.size && y < board.size; }
+
+/* Клетки корабля длиной len с началом в (x, y); dir: 'h' — вправо, 'v' — вниз */
+function cellsOf(x, y, len, dir) {
+  var out = [];
+  for (var i = 0; i < len; i++) out.push(dir === 'h' ? [x + i, y] : [x, y + i]);
+  return out;
+}
+function shipCells(ship) { return cellsOf(ship.x, ship.y, ship.len, ship.dir); }
+function shipAt(board, x, y) {
+  var id = board.grid[cellIndex(board, x, y)];
+  return id === null ? null : board.ships[id];
+}
+
+/* Можно ли поставить корабль: в пределах поля и не касается других (даже углом).
+   ignoreId — корабль, который не учитываем (когда двигаем его самого). */
+function canPlace(board, len, x, y, dir, ignoreId) {
+  if (ignoreId === undefined) ignoreId = null;
+  return cellsOf(x, y, len, dir).every(function (c) {
+    if (!inBounds(board, c[0], c[1])) return false;
+    for (var dy = -1; dy <= 1; dy++) {
+      for (var dx = -1; dx <= 1; dx++) {
+        var nx = c[0] + dx, ny = c[1] + dy;
+        if (!inBounds(board, nx, ny)) continue;
+        var g = board.grid[cellIndex(board, nx, ny)];
+        if (g !== null && g !== ignoreId) return false;
+      }
+    }
+    return true;
+  });
+}
+
+/* Снять корабль с поля */
+function unplaceShip(board, ship) {
+  if (!ship.placed) return;
+  shipCells(ship).forEach(function (c) { board.grid[cellIndex(board, c[0], c[1])] = null; });
+  ship.placed = false;
+}
+
+/* Поставить (или переставить) корабль. Возвращает false, если нельзя. */
+function placeShip(board, ship, x, y, dir) {
+  if (!canPlace(board, ship.len, x, y, dir, ship.id)) return false;
+  unplaceShip(board, ship);
+  ship.x = x; ship.y = y; ship.dir = dir; ship.placed = true;
+  shipCells(ship).forEach(function (c) { board.grid[cellIndex(board, c[0], c[1])] = ship.id; });
+  return true;
+}
+
+function clearShips(board) { board.ships.forEach(function (s) { unplaceShip(board, s); }); }
+function allPlaced(board) { return board.ships.every(function (s) { return s.placed; }); }
+
+/* Случайная расстановка всего флота */
+function placeRandomly(board) {
+  var order = board.ships.slice().sort(function (a, b) { return b.len - a.len; });
+  for (var attempt = 0; attempt < 200; attempt++) {
+    clearShips(board);
+    var ok = order.every(function (ship) {
+      for (var t = 0; t < 400; t++) {
+        var dir = Math.random() < 0.5 ? 'h' : 'v';
+        var x = Math.floor(Math.random() * (board.size - (dir === 'h' ? ship.len - 1 : 0)));
+        var y = Math.floor(Math.random() * (board.size - (dir === 'v' ? ship.len - 1 : 0)));
+        if (placeShip(board, ship, x, y, dir)) return true;
+      }
+      return false;
+    });
+    if (ok) return true;
+  }
+  clearShips(board);
+  return false;
+}
+
+/* Карта запретных клеток: занято кораблём или рядом с ним (true = нельзя) */
+function forbiddenCells(board, ignoreId) {
+  var map = [];
+  for (var i = 0; i < board.size * board.size; i++) map.push(false);
+  board.ships.forEach(function (s) {
+    if (!s.placed || s.id === ignoreId) return;
+    shipCells(s).forEach(function (c) {
+      for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++) {
+        if (inBounds(board, c[0] + dx, c[1] + dy)) map[cellIndex(board, c[0] + dx, c[1] + dy)] = true;
+      }
+    });
+  });
+  return map;
+}
+
+/* Клетки вокруг корабля (без самого корабля) */
+function cellsAround(board, ship) {
+  var w = ship.dir === 'h' ? ship.len : 1, h = ship.dir === 'v' ? ship.len : 1, out = [];
+  for (var y = ship.y - 1; y <= ship.y + h; y++) {
+    for (var x = ship.x - 1; x <= ship.x + w; x++) {
+      var inside = x >= ship.x && x < ship.x + w && y >= ship.y && y < ship.y + h;
+      if (!inside && inBounds(board, x, y)) out.push([x, y]);
+    }
+  }
+  return out;
+}
+
+/* Выстрел по одной клетке поля.
+   result: 'invalid' | 'repeat' | 'miss' | 'hit' | 'sunk'
+   для 'sunk' в auto лежат клетки, автоматически помеченные промахами. */
+function shootCell(board, x, y) {
+  if (!inBounds(board, x, y)) return { x: x, y: y, result: 'invalid' };
+  var i = cellIndex(board, x, y);
+  if (board.shots[i] !== SHOT.NONE) return { x: x, y: y, result: 'repeat' };
+  var ship = shipAt(board, x, y);
+  if (!ship) { board.shots[i] = SHOT.MISS; return { x: x, y: y, result: 'miss' }; }
+  board.shots[i] = SHOT.HIT;
+  ship.hits++;
+  if (ship.hits < ship.len) return { x: x, y: y, result: 'hit', ship: ship };
+  ship.sunk = true;
+  var auto = [];
+  cellsAround(board, ship).forEach(function (c) {
+    var j = cellIndex(board, c[0], c[1]);
+    if (board.shots[j] === SHOT.NONE) { board.shots[j] = SHOT.AUTO; auto.push(c); }
+  });
+  return { x: x, y: y, result: 'sunk', ship: ship, auto: auto };
+}
+
+function allSunk(board) { return board.ships.every(function (s) { return s.sunk; }); }
+function shipsAlive(board) { return board.ships.filter(function (s) { return !s.sunk; }).length; }
+
+/* Новая партия */
+function createGame(modeId) {
+  var mode = MODES[modeId] || MODES.classic;
+  var game = { mode: mode, players: [], current: 0, phase: 'placement', winner: null };
+  for (var i = 0; i < 2; i++) {
+    game.players.push({ index: i, name: 'Игрок ' + (i + 1), board: createBoard(mode.size, mode.fleet), shots: 0, hits: 0 });
+  }
+  return game;
+}
+
+/* Ход текущего игрока по клетке (x, y).
+   Возвращает null, если выстрел невозможен (сюда уже стреляли), иначе итог:
+   { shooter, target, results[], anyHit, anySunk, keepTurn, winner } */
+function fire(game, x, y, weaponId) {
+  if (game.phase !== 'battle') return null;
+  var shooter = game.players[game.current];
+  var target = game.players[1 - game.current];
+  var weapon = WEAPONS[weaponId] || WEAPONS.single;
+  var results = weapon.cells(x, y)
+    .map(function (c) { return shootCell(target.board, c[0], c[1]); })
+    .filter(function (r) { return r.result !== 'invalid' && r.result !== 'repeat'; });
+  if (!results.length) return null;
+
+  var outcome = {
+    shooter: shooter.index, target: target.index, results: results,
+    anyHit: results.some(function (r) { return r.result !== 'miss'; }),
+    anySunk: results.some(function (r) { return r.result === 'sunk'; }),
+    keepTurn: false, winner: null
+  };
+  shooter.shots += results.length;
+  shooter.hits += results.filter(function (r) { return r.result !== 'miss'; }).length;
+
+  if (allSunk(target.board)) {
+    game.phase = 'over'; game.winner = shooter.index; outcome.winner = shooter.index;
+  } else if (game.mode.keepsTurn(outcome)) {
+    outcome.keepTurn = true;
+  } else {
+    game.current = target.index;        // ход переходит сопернику
+  }
+  Bus.emit('shot', { game: game, outcome: outcome });
+  if (outcome.winner !== null) Bus.emit('game:over', { game: game, winner: outcome.winner });
+  return outcome;
+}
+
+
+/* ======================================================================
+   3. ФОТО: уменьшение и хранение
+   ====================================================================== */
+/* Хранилище: сначала пробуем IndexedDB, потом localStorage, иначе только память. */
+var Store = {
+  DB: 'seabattle', TABLE: 'kv', KEY: 'photos', LS_KEY: 'seabattle.photos',
+  db: null, kind: 'memory',
+
+  init: function () {
+    var self = this;
+    return new Promise(function (resolve) {
+      var fallback = function () {
+        try { localStorage.setItem('seabattle.test', '1'); localStorage.removeItem('seabattle.test'); self.kind = 'ls'; }
+        catch (e) { self.kind = 'memory'; }
+        resolve();
+      };
+      try {
+        var req = indexedDB.open(self.DB, 1);
+        req.onupgradeneeded = function () { req.result.createObjectStore(self.TABLE); };
+        req.onsuccess = function () { self.db = req.result; self.kind = 'idb'; resolve(); };
+        req.onerror = fallback;
+        req.onblocked = fallback;
+      } catch (e) { fallback(); }
+    });
+  },
+
+  /* Одна операция с IndexedDB */
+  idb: function (mode, action) {
+    var self = this;
+    return new Promise(function (resolve, reject) {
+      var tx = self.db.transaction(self.TABLE, mode);
+      var req = action(tx.objectStore(self.TABLE));
+      tx.oncomplete = function () { resolve(req.result); };
+      tx.onerror = tx.onabort = function () { reject(tx.error); };
+    });
+  },
+
+  load: function () {
+    var self = this;
+    if (this.kind === 'idb') {
+      return this.idb('readonly', function (s) { return s.get(self.KEY); })
+        .then(function (v) { return Array.isArray(v) ? v : []; })
+        .catch(function () { return []; });
+    }
+    if (this.kind === 'ls') {
+      try { var v = JSON.parse(localStorage.getItem(this.LS_KEY)); return Promise.resolve(Array.isArray(v) ? v : []); }
+      catch (e) { return Promise.resolve([]); }
+    }
+    return Promise.resolve([]);
+  },
+
+  /* Возвращает true, если фото сохранены и переживут перезагрузку страницы */
+  save: function (list) {
+    var self = this;
+    if (this.kind === 'idb') {
+      return this.idb('readwrite', function (s) { return s.put(list, self.KEY); })
+        .then(function () { return true; })
+        .catch(function () { return false; });
+    }
+    if (this.kind === 'ls') {
+      try { localStorage.setItem(this.LS_KEY, JSON.stringify(list)); return Promise.resolve(true); }
+      catch (e) { return Promise.resolve(false); }     // обычно — кончилось место
+    }
+    return Promise.resolve(false);
+  }
+};
+
+/* Общий набор фото для обоих игроков. Каждое фото — строка data:image/jpeg. */
+var Photos = {
+  list: [],
+  max: MODES.classic.fleet.length,       // больше, чем кораблей, фото не нужно
+
+  load: function () {
+    var self = this;
+    return Store.init().then(function () { return Store.load(); }).then(function (list) {
+      self.list = list.slice(0, self.max);
+      self.applyStyles();
+    });
+  },
+  save: function () { this.applyStyles(); return Store.save(this.list); },
+
+  /* Каждое фото превращаем в CSS-класс .ph-N — тогда кораблю достаточно дать класс */
+  applyStyles: function () {
+    document.getElementById('photo-styles').textContent = this.list.map(function (url, i) {
+      return '.ph-' + i + '{background-image:url("' + url + '")}';
+    }).join('\n');
+  },
+
+  /* Классы оформления корабля: фото по кругу или цветной блок, если фото нет */
+  skin: function (shipId, len) {
+    var n = this.list.length;
+    return 'ship len-' + len + (n ? ' ph-' + (shipId % n) : ' plain');
+  }
+};
+
+/* Файл с планшета -> уменьшенная картинка (data URL) */
+function fileToDataUrl(file) {
+  return new Promise(function (resolve, reject) {
+    var url = URL.createObjectURL(file);
+    var img = new Image();
+    img.onload = function () {
+      try {
+        var k = Math.min(1, PHOTO_MAX_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
+        var canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(img.naturalWidth * k));
+        canvas.height = Math.max(1, Math.round(img.naturalHeight * k));
+        var ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#fff';                               // фон для прозрачных PNG
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', PHOTO_QUALITY));
+      } catch (e) { reject(e); }
+      URL.revokeObjectURL(url);
+    };
+    img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('не картинка')); };
+    img.src = url;
+  });
+}
+
+
+/* ======================================================================
+   4. ЗВУК (Web Audio API, без файлов)
+   ====================================================================== */
+var Sound = {
+  ctx: null, enabled: true, noiseBuf: null,
+
+  init: function () {
+    try { this.enabled = localStorage.getItem('seabattle.sound') !== '0'; } catch (e) {}
+  },
+  toggle: function () {
+    this.enabled = !this.enabled;
+    try { localStorage.setItem('seabattle.sound', this.enabled ? '1' : '0'); } catch (e) {}
+    return this.enabled;
+  },
+  /* Браузеры разрешают звук только после касания — вызываем при каждом нажатии */
+  unlock: function () {
+    if (!this.ctx) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      try { this.ctx = new AC(); } catch (e) { return; }
+    }
+    if (this.ctx.state === 'suspended') this.ctx.resume();
+  },
+  ready: function () { return this.enabled && this.ctx && this.ctx.state === 'running'; },
+
+  /* Тон с плавным изменением частоты */
+  tone: function (o) {
+    if (!this.ready()) return;
+    var ctx = this.ctx, t = ctx.currentTime + (o.delay || 0);
+    var osc = ctx.createOscillator(), gain = ctx.createGain();
+    osc.type = o.type || 'sine';
+    osc.frequency.setValueAtTime(o.from, t);
+    if (o.to) osc.frequency.exponentialRampToValueAtTime(o.to, t + o.dur);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(o.vol || 0.3, t + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + o.dur);
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.start(t); osc.stop(t + o.dur + 0.05);
+  },
+  /* Шум через фильтр: взрыв, всплеск */
+  noise: function (o) {
+    if (!this.ready()) return;
+    var ctx = this.ctx, t = ctx.currentTime + (o.delay || 0);
+    if (!this.noiseBuf) {
+      var len = Math.floor(ctx.sampleRate * 1.5);
+      this.noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
+      var data = this.noiseBuf.getChannelData(0);
+      for (var i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+    }
+    var src = ctx.createBufferSource(), filter = ctx.createBiquadFilter(), gain = ctx.createGain();
+    src.buffer = this.noiseBuf;
+    filter.type = o.type || 'lowpass';
+    filter.Q.value = o.q || 1;
+    filter.frequency.setValueAtTime(o.from, t);
+    filter.frequency.exponentialRampToValueAtTime(o.to, t + o.dur);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(o.vol || 0.4, t + (o.attack || 0.01));
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + o.dur);
+    src.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
+    src.start(t); src.stop(t + o.dur + 0.05);
+  },
+
+  hit: function () {            // взрыв
+    this.noise({ from: 1800, to: 180, dur: 0.4, vol: 0.7 });
+    this.tone({ from: 190, to: 45, dur: 0.35, vol: 0.6 });
+  },
+  miss: function () {           // всплеск
+    this.tone({ from: 520, to: 140, dur: 0.16, vol: 0.25 });
+    this.noise({ type: 'bandpass', q: 0.9, from: 2600, to: 500, dur: 0.6, vol: 0.5, attack: 0.05, delay: 0.03 });
+  },
+  sunk: function () {           // большой взрыв и «буль-буль»
+    this.noise({ from: 2200, to: 70, dur: 1.1, vol: 0.9 });
+    this.tone({ type: 'sawtooth', from: 260, to: 35, dur: 0.9, vol: 0.4 });
+    this.tone({ from: 600, to: 300, dur: 0.14, vol: 0.2, delay: 0.55 });
+    this.tone({ from: 450, to: 220, dur: 0.14, vol: 0.2, delay: 0.72 });
+    this.tone({ from: 330, to: 150, dur: 0.2, vol: 0.2, delay: 0.89 });
+  },
+  win: function () {            // фанфары
+    var self = this;
+    [523, 659, 784, 1047, 784, 1047].forEach(function (f, i) {
+      self.tone({ type: 'triangle', from: f, dur: i === 5 ? 0.7 : 0.2, vol: 0.3, delay: i * 0.15 });
+    });
+  },
+  click: function () { this.tone({ type: 'triangle', from: 660, dur: 0.06, vol: 0.12 }); },
+  pick: function () { this.tone({ type: 'triangle', from: 440, to: 660, dur: 0.08, vol: 0.15 }); },
+  place: function () { this.tone({ type: 'triangle', from: 520, to: 260, dur: 0.1, vol: 0.2 }); },
+  error: function () { this.tone({ type: 'sawtooth', from: 170, to: 110, dur: 0.22, vol: 0.18 }); }
+};
+
+
+/* ======================================================================
+   5. ОТРИСОВКА
+   ====================================================================== */
+function $(id) { return document.getElementById(id); }
+function div(cls) { var d = document.createElement('div'); if (cls) d.className = cls; return d; }
+
+/* Создаёт «вид поля» внутри элемента root: подписи A–J и 1–10, слой кораблей, слой клеток.
+   Сам ничего не решает — только показывает то, что лежит в board. */
+function createBoardView(root, size) {
+  root.innerHTML = '';
+  root.style.setProperty('--n', size);
+  for (var i = 0; i < size; i++) {
+    var top = div('lbl'); top.textContent = LETTERS[i];
+    top.style.left = 'calc(var(--c) * ' + (i + 1) + ')'; top.style.top = '0';
+    var left = div('lbl'); left.textContent = i + 1;
+    left.style.top = 'calc(var(--c) * ' + (i + 1) + ')'; left.style.left = '0';
+    root.appendChild(top); root.appendChild(left);
+  }
+  var field = div('field'), shipsLayer = div('ships'), cellsLayer = div('cells'), cells = [];
+  for (var j = 0; j < size * size; j++) { var c = div('cell'); cells.push(c); cellsLayer.appendChild(c); }
+  field.appendChild(shipsLayer); field.appendChild(cellsLayer); root.appendChild(field);
+
+  return {
+    root: root, field: field, size: size, cellPx: 40,
+
+    setCell: function (px) { this.cellPx = px; root.style.setProperty('--c', px + 'px'); },
+
+    /* В какую клетку попала точка экрана */
+    cellAt: function (clientX, clientY) {
+      var r = field.getBoundingClientRect(), c = r.width / size;
+      var x = Math.floor((clientX - r.left) / c), y = Math.floor((clientY - r.top) / c);
+      return { x: x, y: y, inside: x >= 0 && y >= 0 && x < size && y < size };
+    },
+
+    /* Нарисовать поле.
+       o.ships:       'all' — все корабли, 'sunk' — только потопленные, 'none' — никакие
+       o.selectedId:  id выделенного корабля
+       o.fresh:       номера клеток, по которым только что стреляли (для анимации)
+       o.freshShips:  id только что потопленных кораблей (анимация появления фото)
+       o.zone:        карта запретных клеток (расстановка)
+       o.preview:     { cells: [[x, y]…], ok } — куда встанет корабль */
+    render: function (board, o) {
+      o = o || {};
+      shipsLayer.innerHTML = '';
+      board.ships.forEach(function (s) {
+        if (!s.placed) return;
+        if (!(o.ships === 'all' || (o.ships === 'sunk' && s.sunk))) return;
+        var el = div(Photos.skin(s.id, s.len) + ' on-field');
+        el.style.setProperty('--x', s.x); el.style.setProperty('--y', s.y);
+        el.style.setProperty('--w', s.dir === 'h' ? s.len : 1);
+        el.style.setProperty('--h', s.dir === 'v' ? s.len : 1);
+        if (s.sunk) el.classList.add('sunk');
+        if (o.selectedId === s.id) el.classList.add('selected');
+        if (o.freshShips && o.freshShips.indexOf(s.id) >= 0) el.classList.add('fresh');
+        shipsLayer.appendChild(el);
+      });
+
+      var pv = {};
+      if (o.preview) o.preview.cells.forEach(function (c) { pv[cellIndex(board, c[0], c[1])] = true; });
+      for (var i = 0; i < cells.length; i++) {
+        var cls = 'cell', shot = board.shots[i];
+        if (shot === SHOT.MISS) cls += ' miss';
+        else if (shot === SHOT.AUTO) cls += ' miss auto';
+        else if (shot === SHOT.HIT) cls += ' hit' + (board.ships[board.grid[i]].sunk ? ' sunk' : '');
+        if (o.fresh && o.fresh.indexOf(i) >= 0) cls += ' fresh';
+        if (pv[i]) cls += o.preview.ok ? ' pv-ok' : ' pv-bad';
+        else if (o.zone && o.zone[i] && board.grid[i] === null) cls += ' zone';   // сами корабли не закрашиваем, чтобы было видно фото
+        if (cells[i].className !== cls) cells[i].className = cls;
+      }
+    }
+  };
+}
+
+/* Список кораблей рядами по размеру: [4] [3 3] [2 2 2] [1 1 1 1].
+   stateOf(id) может вернуть класс состояния ячейки: 'gone', 'sel', 'dead'.
+   Возвращает ячейки (slot) по id корабля. */
+function renderFleet(container, fleet, stateOf) {
+  container.innerHTML = '';
+  var slots = [], row = null, rowLen = 0;
+  fleet.forEach(function (len, id) {
+    if (len !== rowLen) { row = div('fleet-row'); rowLen = len; container.appendChild(row); }
+    var slot = div('slot'), piece = div('piece ' + Photos.skin(id, len));
+    piece.style.setProperty('--len', len);
+    var state = stateOf ? stateOf(id) : '';
+    if (state) slot.classList.add(state);
+    slot.appendChild(piece); row.appendChild(slot); slots[id] = slot;
+  });
+  return slots;
+}
+
+
+/* ======================================================================
+   6. ЭКРАНЫ
+   ====================================================================== */
+/* Всё состояние интерфейса. Состояние самой игры лежит в UI.game. */
+var UI = {
+  screen: 'menu',
+  game: null,
+  views: {},                    // виды полей: place, target, own, over0, over1
+  passReady: null,              // что сделать после «Я готов»
+  placing: { player: 0, selected: null, dir: 'h', press: null, drag: null, flash: null, slots: [] },
+  battle: { viewer: 0, locked: false, weapon: 'single' }
+};
+
+function showScreen(name) {
+  UI.screen = name;
+  var list = document.querySelectorAll('.screen');
+  for (var i = 0; i < list.length; i++) list[i].classList.toggle('active', list[i].id === 'scr-' + name);
+  layout();
+}
+
+/* ---------- размеры: клетка считается от размера экрана ---------- */
+function layout() {
+  var n = (UI.game ? UI.game.mode.size : MODES.classic.size) + 1;     // клетки + ряд подписей
+  var CAP = 32, r, c;
+
+  if (UI.screen === 'menu') {
+    c = Math.max(20, Math.min(46, Math.floor(window.innerHeight / 22)));
+    $('menu-fleet').style.setProperty('--c', c + 'px');
+
+  } else if (UI.screen === 'photos') {
+    r = $('ph-left').getBoundingClientRect();
+    var gridW = Math.min(r.width - 16, 5 * (r.height - CAP - 90) / 2);
+    $('ph-grid').style.width = Math.max(200, Math.floor(gridW)) + 'px';
+    r = $('ph-right').getBoundingClientRect();
+    c = Math.floor(Math.min((r.width - 16) / 7.8, (r.height - CAP - 20) / 5.4, 72));
+    $('ph-fleet').style.setProperty('--c', Math.max(20, c) + 'px');
+
+  } else if (UI.screen === 'place') {
+    r = $('pl-main').getBoundingClientRect();
+    var sideMin = Math.max(300, r.width * 0.36);                       // место под док и кнопки
+    c = Math.max(20, Math.floor(Math.min(r.height / n, (r.width - sideMin) / n)));
+    UI.views.place.setCell(c);
+    var sideW = r.width - c * n - 24;
+    var dc = Math.floor(Math.min(c * 0.9, sideW / 7.8, (r.height - 240) / 5.4));
+    $('pl-dock').style.setProperty('--c', Math.max(26, dc) + 'px');
+    $('ghost').style.setProperty('--c', c + 'px');
+
+  } else if (UI.screen === 'battle') {
+    r = $('bt-main').getBoundingClientRect();
+    c = Math.max(20, Math.floor(Math.min((r.height - CAP) / n, r.width * 0.62 / n)));
+    UI.views.target.setCell(c);
+    var w = r.width - c * n - 24;                                      // ширина правой колонки
+    var fc = Math.max(12, Math.min(30, Math.floor(w / 12.6)));          // клетка в списке «Корабли соперника»
+    var fleetH = 2 * (fc + 6) + 4;
+    var m = Math.floor(Math.min(w / n, (r.height - CAP * 2 - fleetH) / n, c * 0.72));
+    UI.views.own.setCell(Math.max(14, m));
+    $('bt-fleet').style.setProperty('--c', fc + 'px');
+    $('bt-fleet').style.width = Math.floor(w) + 'px';
+    $('bt-banner').style.fontSize = Math.floor(c * 1.35) + 'px';
+
+  } else if (UI.screen === 'over') {
+    r = $('ov-main').getBoundingClientRect();
+    c = Math.max(16, Math.floor(Math.min((r.height - CAP - 30) / n, (r.width / 2 - 24) / n)));
+    UI.views.over0.setCell(c); UI.views.over1.setCell(c);
+  }
+}
+
+/* ---------- окно подтверждения и всплывающая подсказка ---------- */
+var modalYes = null;
+function confirmBox(text, yesLabel, onYes) {
+  $('modal-text').textContent = text;
+  $('modal-yes').textContent = yesLabel;
+  modalYes = onYes;
+  $('modal').classList.add('show');
+}
+function closeModal(run) {
+  $('modal').classList.remove('show');
+  var f = modalYes; modalYes = null;
+  if (run && f) f();
+}
+var toastTimer = 0;
+function toast(text, ms) {
+  var t = $('toast');
+  t.textContent = text; t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { t.classList.remove('show'); }, ms || 2800);
+}
+
+/* ---------- главное меню ---------- */
+function showMenu() {
+  UI.game = null;
+  renderFleet($('menu-fleet'), MODES.classic.fleet);
+  var n = Photos.list.length;
+  $('menu-photo-info').textContent = n
+    ? 'Загружено фото: ' + n + ' из ' + Photos.max
+    : 'Фото пока нет — корабли будут цветными блоками';
+  showScreen('menu');
+}
+function askExitToMenu() {
+  confirmBox('Выйти в меню? Эта игра не сохранится.', 'Выйти', showMenu);
+}
+
+/* ---------- экран «Фото для кораблей» ---------- */
+var photoReplace = false;      // следующий выбор файлов заменяет все фото, а не добавляет
+
+function showPhotos() { renderPhotos(); showScreen('photos'); }
+
+function renderPhotos() {
+  var n = Photos.list.length, grid = $('ph-grid');
+  grid.innerHTML = '';
+  Photos.list.forEach(function (url, i) {
+    var t = div('thumb ph-' + i);
+    t.innerHTML = '<b>' + (i + 1) + '</b><i>×</i>';
+    t.addEventListener('click', function () {
+      confirmBox('Удалить фото № ' + (i + 1) + '?', 'Удалить', function () {
+        Photos.list.splice(i, 1);
+        Photos.save().then(renderPhotos);
+      });
+    });
+    grid.appendChild(t);
+  });
+  if (!n) {
+    var e = div(); e.id = 'ph-empty';
+    e.textContent = 'Фото пока нет. Нажми «Добавить фото» — можно выбрать из галереи или сделать снимок. Без фото корабли будут цветными блоками.';
+    grid.appendChild(e);
+  }
+  $('ph-count').textContent = n + ' из ' + Photos.max;
+  $('ph-hint').textContent = !n ? ''
+    : n < Photos.max ? 'Фото идут по порядку: № 1 — самый большой корабль. Фото меньше, чем кораблей, поэтому они повторяются по кругу. Нажми на фото, чтобы удалить его.'
+    : 'Фото идут по порядку: № 1 — самый большой корабль. Нажми на фото, чтобы удалить его.';
+  $('ph-add').disabled = n >= Photos.max;
+  $('ph-replace').disabled = !n;
+  $('ph-clear').disabled = !n;
+  renderFleet($('ph-fleet'), MODES.classic.fleet);
+  layout();
+}
+
+/* Обработать выбранные файлы: уменьшить, добавить (или заменить), сохранить */
+function addPhotoFiles(files, replace) {
+  var list = replace ? [] : Photos.list.slice();
+  var room = Photos.max - list.length;
+  var take = files.slice(0, room), failed = 0;
+  toast('Обрабатываю фото…', 60000);
+
+  var chain = Promise.resolve();
+  take.forEach(function (file) {
+    chain = chain.then(function () { return fileToDataUrl(file); })
+      .then(function (url) { list.push(url); }, function () { failed++; });
+  });
+  return chain.then(function () {
+    if (list.length === (replace ? 0 : Photos.list.length)) {         // ничего не добавилось
+      toast('Не получилось прочитать фото. Попробуй другие картинки.');
+      return;
+    }
+    Photos.list = list;
+    return Photos.save().then(function (saved) {
+      renderPhotos();
+      var msg = [];
+      if (files.length > room) msg.push('Взято только ' + room + ' фото — по одному на корабль.');
+      if (failed) msg.push('Не удалось прочитать: ' + failed + '.');
+      if (!saved) msg.push('Сохранить не получилось: фото пропадут после перезагрузки страницы.');
+      toast(msg.length ? msg.join(' ') : 'Готово!', msg.length ? 5000 : 1500);
+    });
+  });
+}
+
+/* ---------- начало партии ---------- */
+function newGame() {
+  var g = createGame('classic'), size = g.mode.size;
+  UI.game = g;
+  UI.views = {
+    place: createBoardView($('pl-board'), size),
+    target: createBoardView($('bt-target'), size),
+    own: createBoardView($('bt-own'), size),
+    over0: createBoardView($('ov-board0'), size),
+    over1: createBoardView($('ov-board1'), size)
+  };
+  UI.battle.weapon = 'single';
+  Bus.emit('game:new', { game: g });
+  startPlacement(0);
+}
+
+/* ---------- расстановка ---------- */
+var P = UI.placing;
+function placingBoard() { return UI.game.players[P.player].board; }
+function flipDir(d) { return d === 'h' ? 'v' : 'h'; }
+
+function startPlacement(player) {
+  P.player = player; P.selected = null; P.dir = 'h';
+  P.press = null; P.drag = null; P.flash = null;
+  $('scr-place').setAttribute('data-player', player);
+  $('pl-title').textContent = UI.game.players[player].name + ', расставь корабли';
+  buildDock();
+  showScreen('place');
+  renderPlacement();
+}
+
+/* Док — корабли, которые ещё не стоят на поле. Строится один раз, дальше меняются только классы. */
+function buildDock() {
+  P.slots = renderFleet($('pl-dock'), UI.game.mode.fleet);
+  P.slots.forEach(function (slot, id) {
+    slot.addEventListener('pointerdown', function (e) {
+      var ship = placingBoard().ships[id];
+      if (ship.placed) return;
+      var r = slot.firstChild.getBoundingClientRect();
+      var grab = Math.floor((e.clientX - r.left) / (r.width / ship.len));   // за какую клетку взяли корабль
+      pressStart(e, id, 'dock', Math.max(0, Math.min(ship.len - 1, grab)));
+    });
+  });
+}
+
+function renderPlacement() {
+  var board = placingBoard();
+  var sel = P.selected !== null ? board.ships[P.selected] : null;
+  var preview = P.drag ? P.drag.target : P.flash;
+  UI.views.place.render(board, {
+    ships: 'all',
+    selectedId: P.selected,
+    zone: sel ? forbiddenCells(board, sel.id) : null,
+    preview: preview
+  });
+  P.slots.forEach(function (slot, id) {
+    var s = board.ships[id];
+    slot.className = 'slot' + (s.placed || (P.drag && P.drag.shipId === id) ? ' gone' : (P.selected === id ? ' sel' : ''));
+  });
+
+  var done = allPlaced(board);
+  $('pl-done').disabled = !done;
+  $('pl-rotate').textContent = sel && sel.placed ? 'Повернуть' : 'Повернуть ' + (P.dir === 'h' ? '↔' : '↕');
+  var hint;
+  if (sel && sel.placed) hint = 'Нажми «Повернуть» или на другую клетку, чтобы переставить корабль.';
+  else if (sel) hint = 'Теперь нажми на клетку поля. Корабль встанет ' + (P.dir === 'h' ? 'горизонтально ↔' : 'вертикально ↕') + '.';
+  else if (done) hint = 'Все корабли на месте. Можно ещё подвигать их или нажать «Готово».';
+  else hint = 'Перетащи корабль на поле. Или нажми на корабль, а потом на клетку.';
+  $('pl-hint').textContent = hint;
+}
+
+/* Красная вспышка на клетках, куда корабль не встал */
+function flashBad(cells) {
+  var board = placingBoard();
+  var flash = { cells: cells.filter(function (c) { return inBounds(board, c[0], c[1]); }), ok: false };
+  P.flash = flash;
+  Sound.error();
+  setTimeout(function () { if (P.flash === flash) { P.flash = null; if (UI.screen === 'place') renderPlacement(); } }, 500);
+}
+
+/* --- касание: короткое = «тап», со сдвигом = перетаскивание --- */
+function pressStart(e, shipId, source, grabIdx) {
+  if (P.press) return;                       // второй палец не мешает первому
+  Sound.unlock();
+  P.press = {
+    pointerId: e.pointerId, x0: e.clientX, y0: e.clientY,
+    shipId: shipId, source: source, grabIdx: grabIdx,
+    cell: source === 'field' ? UI.views.place.cellAt(e.clientX, e.clientY) : null,
+    dragging: false, origin: null, dir: 'h', target: null, key: '', px: 0, py: 0
+  };
+  window.addEventListener('pointermove', pressMove);
+  window.addEventListener('pointerup', pressEnd);
+  window.addEventListener('pointercancel', pressCancel);
+}
+function pressStop() {
+  window.removeEventListener('pointermove', pressMove);
+  window.removeEventListener('pointerup', pressEnd);
+  window.removeEventListener('pointercancel', pressCancel);
+  P.press = null; P.drag = null;
+  $('ghost').style.display = 'none';
+}
+function pressMove(e) {
+  var p = P.press;
+  if (!p || e.pointerId !== p.pointerId) return;
+  if (!p.dragging) {
+    if (p.shipId === null) return;
+    if (Math.abs(e.clientX - p.x0) + Math.abs(e.clientY - p.y0) < DRAG_THRESHOLD) return;
+    dragStart(p);
+  }
+  dragMove(e.clientX, e.clientY);
+}
+function pressEnd(e) {
+  var p = P.press;
+  if (!p || e.pointerId !== p.pointerId) return;
+  pressStop();
+  if (p.dragging) dragDrop(p); else tapPlacement(p);
+  renderPlacement();
+}
+function pressCancel(e) {
+  var p = P.press;
+  if (!p || e.pointerId !== p.pointerId) return;
+  pressStop();
+  if (p.dragging && p.origin) placeShip(placingBoard(), placingBoard().ships[p.shipId], p.origin.x, p.origin.y, p.origin.dir);
+  renderPlacement();
+}
+
+/* Поднять корабль: снять с поля (если стоял) и показать «призрак» под пальцем */
+function dragStart(p) {
+  var board = placingBoard(), ship = board.ships[p.shipId];
+  p.dragging = true;
+  p.origin = ship.placed ? { x: ship.x, y: ship.y, dir: ship.dir } : null;
+  p.dir = ship.placed ? ship.dir : P.dir;
+  unplaceShip(board, ship);
+  P.selected = ship.id; P.drag = p; P.flash = null;
+  $('ghost').className = Photos.skin(ship.id, ship.len);
+  $('ghost').style.display = 'block';
+  Sound.pick();
+}
+/* Двигать корабль за пальцем и считать, в какие клетки он попадает */
+function dragMove(px, py) {
+  var p = P.drag, view = UI.views.place, board = placingBoard(), ship = board.ships[p.shipId];
+  var c = view.cellPx, g = $('ghost');
+  p.px = px; p.py = py;
+  var along = (p.grabIdx + 0.5) * c, across = 0.5 * c;
+  var left = px - (p.dir === 'h' ? along : across), top = py - (p.dir === 'h' ? across : along);
+  g.style.setProperty('--w', p.dir === 'h' ? ship.len : 1);
+  g.style.setProperty('--h', p.dir === 'v' ? ship.len : 1);
+  g.style.transform = 'translate(' + (left + 2) + 'px,' + (top + 2) + 'px)';
+
+  var fr = view.field.getBoundingClientRect();
+  var gx = Math.round((left - fr.left) / c), gy = Math.round((top - fr.top) / c);
+  var key = gx + ':' + gy + ':' + p.dir;
+  if (key === p.key) return;                 // клетка не изменилась — перерисовывать не надо
+  p.key = key;
+  var cells = cellsOf(gx, gy, ship.len, p.dir).filter(function (q) { return inBounds(board, q[0], q[1]); });
+  p.target = cells.length ? { x: gx, y: gy, dir: p.dir, cells: cells, ok: canPlace(board, ship.len, gx, gy, p.dir) } : null;
+  renderPlacement();
+}
+/* Отпустить корабль */
+function dragDrop(p) {
+  var board = placingBoard(), ship = board.ships[p.shipId], t = p.target;
+  if (t && t.ok) { placeShip(board, ship, t.x, t.y, t.dir); Sound.place(); }
+  else if (t && p.origin) { placeShip(board, ship, p.origin.x, p.origin.y, p.origin.dir); Sound.error(); }   // нельзя — вернуть на место
+  else if (t) Sound.error();                 // нельзя — корабль остаётся в доке
+  // отпустили мимо поля — корабль возвращается в док
+}
+
+/* Короткое нажатие при расстановке */
+function tapPlacement(p) {
+  var board = placingBoard();
+  if (p.source === 'dock') {                 // выбрать корабль в доке
+    P.selected = P.selected === p.shipId ? null : p.shipId;
+    Sound.click();
+    return;
+  }
+  var x = p.cell.x, y = p.cell.y, here = shipAt(board, x, y);
+  if (here) {                                // выбрать корабль на поле
+    P.selected = P.selected === here.id ? null : here.id;
+    Sound.click();
+  } else if (P.selected !== null) {          // поставить выбранный корабль в эту клетку
+    var s = board.ships[P.selected], dir = s.placed ? s.dir : P.dir;
+    if (dir === 'h') x = Math.min(x, board.size - s.len); else y = Math.min(y, board.size - s.len);   // не даём вылезти за край
+    if (placeShip(board, s, x, y, dir)) Sound.place();
+    else flashBad(cellsOf(x, y, s.len, dir));
+  }
+}
+
+/* Кнопка «Повернуть» */
+function rotateAction() {
+  Sound.unlock();
+  var board = placingBoard();
+  if (P.drag) {                              // крутим корабль прямо во время перетаскивания (вторым пальцем)
+    P.drag.dir = flipDir(P.drag.dir); P.drag.key = '';
+    dragMove(P.drag.px, P.drag.py);
+    return;
+  }
+  var s = P.selected !== null ? board.ships[P.selected] : null;
+  if (s && s.placed) {                       // корабль на поле: поворот вокруг любой из его клеток
+    var nd = flipDir(s.dir), cands = [];
+    for (var k = 0; k < s.len; k++) {
+      var px = s.dir === 'h' ? s.x + k : s.x, py = s.dir === 'h' ? s.y : s.y + k;
+      for (var j = 0; j < s.len; j++) cands.push(nd === 'h' ? [px - j, py] : [px, py - j]);
+    }
+    var ok = null;
+    cands.forEach(function (c) { if (!ok && canPlace(board, s.len, c[0], c[1], nd, s.id)) ok = c; });
+    if (ok) { placeShip(board, s, ok[0], ok[1], nd); Sound.place(); }
+    else flashBad(cellsOf(cands[0][0], cands[0][1], s.len, nd));
+  } else {                                   // корабль ещё в доке: меняем направление для следующей постановки
+    P.dir = flipDir(P.dir);
+    Sound.click();
+  }
+  renderPlacement();
+}
+
+function finishPlacement() {
+  var g = UI.game;
+  if (!allPlaced(placingBoard())) return;
+  Sound.click();
+  Bus.emit('placement:done', { game: g, player: P.player });
+  if (P.player === 0) {
+    showPass(1, 'Игрок 2 расставляет корабли. Игрок 1, не подглядывай!', function () { startPlacement(1); });
+  } else {
+    g.phase = 'battle'; g.current = 0;
+    showPass(0, 'Все корабли расставлены. Первым стреляет Игрок 1!', function () { enterBattle(0); });
+  }
+}
+
+/* ---------- заставка «Передай планшет» ---------- */
+function showPass(player, sub, onReady) {
+  $('scr-pass').setAttribute('data-player', player);
+  $('pass-title').textContent = 'Передай планшет игроку ' + (player + 1);
+  $('pass-sub').textContent = sub;
+  UI.passReady = onReady;
+  var b = $('pass-ok');
+  b.disabled = true;                         // защита от случайного двойного нажатия
+  setTimeout(function () { b.disabled = false; }, 600);
+  showScreen('pass');
+}
+
+/* ---------- бой ---------- */
+var B = UI.battle;
+
+/* Игрок viewer получил планшет и начинает ход */
+function enterBattle(viewer) {
+  B.viewer = viewer; B.locked = false;
+  $('scr-battle').setAttribute('data-player', viewer);
+  $('bt-banner').classList.remove('show');
+  showScreen('battle');
+  renderBattle();
+  Bus.emit('turn:start', { game: UI.game, player: viewer });
+}
+
+/* fx — что анимировать: { fresh: [номера клеток], sunkIds: [id кораблей] } */
+function renderBattle(fx) {
+  fx = fx || {};
+  var g = UI.game, me = g.players[B.viewer], enemy = g.players[1 - B.viewer];
+  $('bt-title').textContent = 'Ход: ' + me.name;
+  $('bt-info').textContent = 'Осталось потопить: ' + shipsAlive(enemy.board);
+  UI.views.target.render(enemy.board, { ships: 'sunk', fresh: fx.fresh, freshShips: fx.sunkIds });   // чужие корабли скрыты
+  UI.views.own.render(me.board, { ships: 'all' });
+  renderFleet($('bt-fleet'), g.mode.fleet, function (id) { return enemy.board.ships[id].sunk ? 'dead' : ''; });
+}
+
+/* Перезапустить CSS-анимацию: снять класс, дать браузеру это заметить, вернуть класс */
+function replay(el, cls) { el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); }
+
+/* Нажатие на чужое поле — выстрел */
+function onTargetClick(e) {
+  if (UI.screen !== 'battle' || B.locked) return;
+  Sound.unlock();
+  var view = UI.views.target, c = view.cellAt(e.clientX, e.clientY);
+  if (!c.inside) return;
+  var g = UI.game, shooter = g.players[g.current];
+  var out = fire(g, c.x, c.y, B.weapon);
+  if (!out) return;                          // сюда уже стреляли
+
+  var fresh = [], sunkIds = [], size = g.mode.size;
+  out.results.forEach(function (r) {
+    fresh.push(r.y * size + r.x);
+    if (r.result === 'sunk') {
+      sunkIds.push(r.ship.id);
+      r.auto.forEach(function (a) { fresh.push(a[1] * size + a[0]); });
+    }
+  });
+  renderBattle({ fresh: fresh, sunkIds: sunkIds });
+
+  if (out.anySunk) { Sound.sunk(); replay($('bt-banner'), 'show'); replay(view.root, 'shake'); }
+  else if (out.anyHit) { Sound.hit(); replay(view.root, 'shake'); }
+  else Sound.miss();
+
+  var stillHere = function () { return UI.game === g && UI.screen === 'battle'; };
+  if (out.winner !== null) {                 // победа
+    B.locked = true;
+    setTimeout(function () { if (stillHere()) showGameOver(); }, 1700);
+  } else if (!out.keepTurn) {                // промах: показываем его секунду и передаём планшет
+    B.locked = true;
+    setTimeout(function () {
+      if (!stillHere()) return;
+      var next = g.current;
+      showPass(next, shooter.name + ' промахнулся. Теперь стреляет ' + g.players[next].name + '.', function () { enterBattle(next); });
+    }, 1100);
+  }
+}
+
+/* ---------- конец игры ---------- */
+function showGameOver() {
+  var g = UI.game, winner = g.players[g.winner];
+  $('scr-over').setAttribute('data-player', g.winner);
+  $('ov-title').textContent = '🏆 Победил ' + winner.name + '!';
+  g.players.forEach(function (pl, i) {
+    $('ov-cap' + i).textContent = 'Флот: ' + pl.name + (i === g.winner ? ' 🏆' : '');
+    var pct = pl.shots ? Math.round(100 * pl.hits / pl.shots) : 0;
+    $('ov-stat' + i).textContent = 'Выстрелов: ' + pl.shots + ' · попаданий: ' + pl.hits + ' · точность: ' + pct + '%';
+    UI.views['over' + i].render(pl.board, { ships: 'all' });
+  });
+  showScreen('over');
+  Sound.win();
+}
+
+
+/* ======================================================================
+   7. ЗАПУСК: обработчики кнопок и касаний
+   ====================================================================== */
+function bindEvents() {
+  var click = function (id, fn) { $(id).addEventListener('click', function (e) { Sound.unlock(); fn(e); }); };
+
+  // меню
+  click('btn-play', function () { Sound.click(); newGame(); });
+  click('btn-photos', function () { Sound.click(); showPhotos(); });
+  var root = document.documentElement;
+  var goFull = root.requestFullscreen || root.webkitRequestFullscreen;
+  if (goFull) {
+    $('btn-fs').hidden = false;
+    click('btn-fs', function () {
+      var el = document.fullscreenElement || document.webkitFullscreenElement;
+      if (el) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      else { var p = goFull.call(root); if (p && p.catch) p.catch(function () {}); }
+    });
+  }
+
+  // фото
+  click('ph-back', showMenu);
+  click('ph-add', function () { photoReplace = false; $('ph-input').click(); });
+  click('ph-replace', function () { photoReplace = true; $('ph-input').click(); });
+  click('ph-clear', function () {
+    confirmBox('Удалить все фото? Корабли станут цветными блоками.', 'Удалить', function () {
+      Photos.list = [];
+      Photos.save().then(renderPhotos);
+    });
+  });
+  $('ph-input').addEventListener('change', function () {
+    var files = Array.prototype.slice.call(this.files || []);
+    this.value = '';                         // чтобы можно было выбрать те же файлы ещё раз
+    if (files.length) addPhotoFiles(files, photoReplace);
+  });
+
+  // расстановка
+  click('pl-menu', askExitToMenu);
+  click('pl-rotate', rotateAction);
+  click('pl-random', function () { P.selected = null; placeRandomly(placingBoard()); Sound.place(); renderPlacement(); });
+  click('pl-clear', function () { P.selected = null; clearShips(placingBoard()); Sound.click(); renderPlacement(); });
+  click('pl-done', finishPlacement);
+  $('pl-board').addEventListener('pointerdown', function (e) {
+    if (UI.screen !== 'place') return;
+    var c = UI.views.place.cellAt(e.clientX, e.clientY);
+    if (!c.inside) return;
+    var ship = shipAt(placingBoard(), c.x, c.y);
+    var grab = ship ? (ship.dir === 'h' ? c.x - ship.x : c.y - ship.y) : 0;
+    pressStart(e, ship ? ship.id : null, 'field', grab);
+  });
+
+  // заставка
+  click('pass-ok', function () {
+    Sound.click();
+    var f = UI.passReady; UI.passReady = null;
+    if (f) f();
+  });
+
+  // бой
+  click('bt-menu', askExitToMenu);
+  click('bt-sound', function () { $('bt-sound').textContent = Sound.toggle() ? '🔊' : '🔇'; Sound.click(); });
+  $('bt-target').addEventListener('click', onTargetClick);
+
+  // конец игры
+  click('ov-rematch', function () { Sound.click(); newGame(); });       // фото остаются те же
+  click('ov-menu', showMenu);
+
+  // окно подтверждения
+  click('modal-yes', function () { closeModal(true); });
+  click('modal-no', function () { closeModal(false); });
+
+  // размеры пересчитываем при повороте и изменении окна
+  window.addEventListener('resize', layout);
+  window.addEventListener('orientationchange', function () { setTimeout(layout, 250); });
+
+  // запрещаем прокрутку, зум и меню по долгому нажатию
+  document.addEventListener('touchmove', function (e) { e.preventDefault(); }, { passive: false });
+  document.addEventListener('gesturestart', function (e) { e.preventDefault(); });
+  document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  document.addEventListener('dblclick', function (e) { e.preventDefault(); });
+}
+
+function start() {
+  Sound.init();
+  $('bt-sound').textContent = Sound.enabled ? '🔊' : '🔇';
+  bindEvents();
+  showMenu();                                // меню показываем сразу, фото подгрузятся следом
+  Photos.load().then(function () { if (UI.screen === 'menu') showMenu(); });
+}
+start();
+</script>
+</body>
+</html>
